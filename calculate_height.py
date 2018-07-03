@@ -20,6 +20,7 @@
  *                                                                         *
  ***************************************************************************/
 """
+from qgis.core import QgsPoint, QgsPointV2, QgsGeometry, QgsRaster, QgsCoordinateTransform, QgsProject
 from PyQt4.QtCore import QSettings, QTranslator, qVersion, QCoreApplication
 from PyQt4.QtGui import QAction, QIcon
 # Initialize Qt resources from file resources.py
@@ -133,7 +134,9 @@ class CalculateHeight:
         """
 
         # Create the dialog (after translation) and keep reference
-        self.dlg = CalculateHeightDialog()
+        self.dlg = CalculateHeightDialog(self.iface.mainWindow())
+
+        self.dlg.buttonCalculate.clicked.connect(self.calculateHeights)
 
         icon = QIcon(icon_path)
         action = QAction(icon, text, parent)
@@ -182,6 +185,25 @@ class CalculateHeight:
 
     def run(self):
         """Run method that performs all the real work"""
+
+
+
+        self.dem_layers_list = []
+        self.vector_layers_list = []
+        layers = self.iface.legendInterface().layers()
+
+        for layer in layers:
+            if(layer.type() == layer.RasterLayer):
+                self.dem_layers_list.append(layer)
+            elif (layer.type() == layer.VectorLayer):
+                self.vector_layers_list.append(layer)
+        
+        self.dlg.cbDEMLayers.clear()
+        self.dlg.cbDEMLayers.addItems(list(map(lambda l:l.name(),self.dem_layers_list)))
+        self.dlg.cbVectorLayers.clear()
+        self.dlg.cbVectorLayers.addItems(list(map(lambda l:l.name(),self.vector_layers_list)))
+
+
         # show the dialog
         self.dlg.show()
         # Run the dialog event loop
@@ -191,3 +213,43 @@ class CalculateHeight:
             # Do something useful here - delete the line containing pass and
             # substitute with your code.
             pass
+
+    def calculateHeights(self):
+        target_layer = self.vector_layers_list[self.dlg.cbVectorLayers.currentIndex()]
+        dem_layer = self.dem_layers_list[self.dlg.cbDEMLayers.currentIndex()]        
+        transform_util = QgsCoordinateTransform(target_layer.crs(), dem_layer.crs()) #, QgsProject.instance())
+
+        for feature in target_layer.getFeatures():
+            print feature.id()
+            
+            geom = feature.geometry()
+
+            coords = geom.asPolygon()
+
+            def updateZValue(coords):
+                result = []
+
+                def calculate(coord):
+                    res = QgsPointV2(coord)
+                    projected_point = transform_util.transform(coord);
+                    sample = dem_layer.dataProvider().identify(projected_point, QgsRaster.IdentifyFormatValue).results()
+                    res.addZValue(sample[1])
+                    return res
+
+                for coord in coords:
+                    new_coord = calculate(coord)
+                    result.append(new_coord)
+
+                return result
+            
+            new_coords = map(updateZValue, coords)
+            for list_ in new_coords:
+                for c in list_:
+                    print c.x()
+                    print c.y()
+                    print c.z()
+                    print c.asJSON()
+            
+            new_geom = QgsGeometry.fromPolygon(new_coords)
+            
+            feature.setGeometry(new_geom)
